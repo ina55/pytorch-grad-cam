@@ -1,3 +1,4 @@
+import sys 
 import os
 import cv2
 import torch
@@ -6,14 +7,18 @@ import numpy as np
 import torchvision.models as models
 from PIL import Image
 from torchvision import transforms
+
+# Add pytorch_grad_cam path to system path
+pytorch_grad_cam_path = os.path.abspath("..")
+sys.path.insert(0, pytorch_grad_cam_path)
 from pytorch_grad_cam import DeepFeatureFactorization
 from pytorch_grad_cam.utils.image import show_factorization_on_image
 
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Load a pretrained model (ResNet-50 for now, but replaceable with I3D, SlowFast, etc.)
-model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT).to(device)
+# Load the r3d_18 model (ResNet-3D with 18 layers)
+model = models.video.r3d_18(pretrained=True).to(device)
 model.eval()
 
 # Define preprocessing function
@@ -51,7 +56,8 @@ def visualize_and_save(frames, batch_explanations, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     visualization_images = []
 
-    for i in range(len(batch_explanations[0])):  
+    min_length = min(len(rgb_frames), len(batch_explanations))
+    for i in range(min_length):  
         visualization = show_factorization_on_image(
             np.array(frames[i]) / 255.0,  # Convert frame to numpy
             batch_explanations[0][i],  
@@ -103,14 +109,17 @@ video_path = f"samples/{dataset_name}/{action_name}.mp4"
 print(f"Loading video from '{video_path}'...")
 input_tensor, rgb_frames = load_video(video_path)
 
-# Add batch dimension
-input_tensor = input_tensor.unsqueeze(0).to(device)  
-input_tensor = input_tensor[:, 0, :, :, :]
+# Add batch dimension and frames dimension (each frame treated as a sequence)
+input_tensor = input_tensor.unsqueeze(0)  # Adding batch dimension
+input_tensor = input_tensor.permute(0, 2, 1, 3, 4)  # Rearranging dimensions
+print(f"Video loaded with shape: {input_tensor.shape}")
 
 # Define Deep Feature Factorization
 dff = DeepFeatureFactorization(model=model, target_layer=model.layer4, computation_on_concepts=model.fc)
 
-# Set number of components
+# Initialize list to store results
+visualization_images = []
+
 n_components = 10
 concepts, batch_explanations, concept_scores = dff(input_tensor, n_components)
 
@@ -120,8 +129,8 @@ visualization_images = visualize_and_save(rgb_frames, batch_explanations, output
 
 # Concatenate all result photos horizontally
 final_output_filename = f"final_output_{dataset_name}_{action_name}.jpg"
-final_output_path = os.path.join(output_dir, final_output_filename)
+final_output_path = os.path.join("output_frames", final_output_filename)
 concatenate_images(visualization_images, final_output_path)
 
 # Cleanup auxiliary frames after processing
-cleanup_auxiliary_frames(output_dir)
+cleanup_auxiliary_frames("output_frames")

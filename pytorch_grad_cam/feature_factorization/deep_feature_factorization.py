@@ -59,29 +59,67 @@ class DeepFeatureFactorization:
     def __call__(self,
                  input_tensor: torch.Tensor,
                  n_components: int = 16):
-        batch_size, channels, h, w = input_tensor.size()
+        # Get the shape of the input tensor: (batch_size, num_frames, channels, height, width)
+        batch_size, num_frames, channels, h, w = input_tensor.size()
+    
+        # Apply activations and gradients to the entire input tensor (batch_size x num_frames)
         _ = self.activations_and_grads(input_tensor)
-
+    
+        # Initialize a list to hold the concepts and explanations for each frame
+        all_concepts = []
+        all_processed_explanations = []
+    
         with torch.no_grad():
-            activations = self.activations_and_grads.activations[0].cpu(
-            ).numpy()
+            # Loop through the frames
+            # Get activations for the specific frame (indexing the activations per frame)
+            activations = self.activations_and_grads.activations[0][0].cpu().numpy()
 
-        concepts, explanations = dff(activations, n_components=n_components)
+            # Perform Deep Feature Factorization on the activations of this frame
+            concepts, explanations = dff(activations, n_components=n_components)
 
-        processed_explanations = []
+            # Process the explanation heatmaps for this frame
+            processed_explanations = []
+            for batch in explanations:
+                processed_explanations.append(scale_cam_image(batch, (w, h)))
 
-        for batch in explanations:
-            processed_explanations.append(scale_cam_image(batch, (w, h)))
+            all_concepts.append(concepts)
+            all_processed_explanations.append(processed_explanations)
+    
+            # If there is a computation to run on the concepts, apply it here
+            if self.computation_on_concepts:
+                with torch.no_grad():
+                    # Ensure the correct shape for the computation on concepts
+                    all_concept_tensors = [torch.from_numpy(np.float32(concept).transpose((1, 0))) for concept in all_concepts]
+            
+                    # Flatten the concepts to match the expected input shape of the Linear layer (if needed)
+                    flattened_concept_tensors = [concept_tensor.reshape(-1) for concept_tensor in all_concept_tensors]
+            
+                    # Iterate over each concept tensor and apply padding if needed
+                    concept_outputs = []
+                    for concept_tensor in flattened_concept_tensors:
+                       # Check if the tensor is 1D, in that case reshape it to 2D (1, N)
+                       if concept_tensor.dim() == 1:
+                           concept_tensor = concept_tensor.unsqueeze(0)  # Convert from (N,) to (1, N)
+                   
+                       # Now apply padding if the tensor size is less than 512
+                       if concept_tensor.size(1) < 512:
+                           padding = 512 - concept_tensor.size(1)
+                           # Pad the tensor with zeros to match the required size
+                           padding_tensor = torch.zeros(1, padding, device=concept_tensor.device)  # Ensure it's on the same device
+                           padded_concept_tensor = torch.cat([concept_tensor, padding_tensor], dim=1)  # Concatenate along dim=1 (columns)
+                       else:
+                           padded_concept_tensor = concept_tensor
+                   
+                       # Now pass the padded tensor through the computation_on_concepts
+                       concept_output = self.computation_on_concepts(padded_concept_tensor.reshape(1, 512))
+                       concept_outputs.append(concept_output.cpu().numpy())
 
-        if self.computation_on_concepts:
-            with torch.no_grad():
-                concept_tensors = torch.from_numpy(
-                    np.float32(concepts).transpose((1, 0)))
-                concept_outputs = self.computation_on_concepts(
-                    concept_tensors).cpu().numpy()
-            return concepts, processed_explanations, concept_outputs
-        else:
-            return concepts, processed_explanations
+            
+                return all_concepts, all_processed_explanations, concept_outputs
+
+    
+            else:
+                return all_concepts, all_processed_explanations
 
     def __del__(self):
         self.activations_and_grads.release()
@@ -129,3 +167,49 @@ def run_dff_on_image(model: torch.nn.Module,
 
     result = np.hstack((np.array(img_pil), visualization))
     return result
+    
+def run_dff_on_video(model: torch.nn.Module,
+                     target_layer: torch.nn.Module,
+                     classifier: torch.nn.Module,
+                     video_frames: List[Image.Image],
+                     video_tensor: torch.Tensor,
+                     reshape_transform: Optional[Callable] = None,
+                     n_components: int = 5,
+                     top_k: int = 2) -> List[np.ndarray]:
+    """
+    Function to run Deep Feature Factorization on a video. It processes each frame of the video,
+    computes the concepts and explanations, and returns a list of visualizations.
+
+    :param video_frames: List of PIL images representing video frames
+    :param video_tensor: Tensor of shape (batch_size, channels, height, width) for video input
+    :param reshape_transform: Optional reshape transformation for the activations
+    :param n_components: Number of components for NMF
+    :param top_k: Top-k concepts to display
+    :return: List of visualized frames as numpy arrays
+    """
+    dff = DeepFeatureFactorization(model=model,
+                                   reshape_transform=reshape_transform,
+                                   target_layer=target_layer,
+                                   computation_on_concepts=classifier)
+
+    visualizations = []
+    for i, frame in enumerate(video_frames):
+        # Process each frame
+        frame_tensor = video_tensor[i].unsqueeze(0)  # Select single frame from video
+        concepts, batch_explanations, concept_outputs = dff(frame_tensor, n_components)
+
+        concept_outputs = torch.softmax(torch.from_numpy(concept_outputs), axis=-1).numpy()
+        concept_label_strings = create_labels_legend(concept_outputs,
+                                                     labels=model.config.id2label,
+                                                     top_k=top_k)
+        visualization = show_factorization_on_image(
+            np.array(frame) / 255.0,
+            batch_explanations[0],
+            image_weight=0.3,
+            concept_labels=concept_label_strings)
+
+        # Append the result for this frame to the list
+        visualizations.append(np.hstack((np.array(frame), visualization)))
+
+    return visualizations
+
