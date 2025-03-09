@@ -35,13 +35,13 @@ def dff(activations: np.ndarray, n_components: int = 5):
 
 class DeepFeatureFactorization:
     """ Deep Feature Factorization: https://arxiv.org/abs/1806.10206
-        This gets a model andcomputes the 2D activations for a target layer,
+        This gets a model and computes the 2D activations for a target layer,
         and computes Non Negative Matrix Factorization on the activations.
 
         Optionally it runs a computation on the concept embeddings,
         like running a classifier on them.
 
-        The explanation heatmaps are scalled to the range [0, 1]
+        The explanation heatmaps are scaled to the range [0, 1]
         and to the input tensor width and height.
      """
 
@@ -60,66 +60,69 @@ class DeepFeatureFactorization:
                  input_tensor: torch.Tensor,
                  n_components: int = 16):
         # Get the shape of the input tensor: (batch_size, num_frames, channels, height, width)
-        batch_size, num_frames, channels, h, w = input_tensor.size()
-    
+        batch_size, channels, num_frames, h, w = input_tensor.size()
+        print(f"Batch size: {batch_size}")
+        print(f"Num frames: {num_frames}")
+        print(f"Channels: {channels}")
+        print(f"Height: {h}")
+        print(f"Width: {w}")
+
         # Apply activations and gradients to the entire input tensor (batch_size x num_frames)
         _ = self.activations_and_grads(input_tensor)
-    
+
         # Initialize a list to hold the concepts and explanations for each frame
         all_concepts = []
         all_processed_explanations = []
-    
+
         with torch.no_grad():
-            # Loop through the frames
-            # Get activations for the specific frame (indexing the activations per frame)
-            activations = self.activations_and_grads.activations[0][0].cpu().numpy()
+            # Iterate over the frames in the batch
+            for frame_idx in range(num_frames):
+                # Get activations for the specific frame (indexing the activations per frame)
 
-            # Perform Deep Feature Factorization on the activations of this frame
-            concepts, explanations = dff(activations, n_components=n_components)
+                activations = self.activations_and_grads.activations[0][0].cpu().numpy()
+                act_np = np.array(self.activations_and_grads.activations)
+                
+                # Perform Deep Feature Factorization on the activations of this frame
+                concepts, explanations = dff(activations, n_components=n_components)
 
-            # Process the explanation heatmaps for this frame
-            processed_explanations = []
-            for batch in explanations:
-                processed_explanations.append(scale_cam_image(batch, (w, h)))
+                # Process the explanation heatmaps for this frame
+                processed_explanations = []
+                for explanation in explanations:
+                    processed_explanations.append(scale_cam_image(explanation, (w, h)))
 
-            all_concepts.append(concepts)
-            all_processed_explanations.append(processed_explanations)
-    
-            # If there is a computation to run on the concepts, apply it here
-            if self.computation_on_concepts:
-                with torch.no_grad():
-                    # Ensure the correct shape for the computation on concepts
-                    all_concept_tensors = [torch.from_numpy(np.float32(concept).transpose((1, 0))) for concept in all_concepts]
-            
-                    # Flatten the concepts to match the expected input shape of the Linear layer (if needed)
-                    flattened_concept_tensors = [concept_tensor.reshape(-1) for concept_tensor in all_concept_tensors]
-            
-                    # Iterate over each concept tensor and apply padding if needed
-                    concept_outputs = []
-                    for concept_tensor in flattened_concept_tensors:
-                       # Check if the tensor is 1D, in that case reshape it to 2D (1, N)
-                       if concept_tensor.dim() == 1:
-                           concept_tensor = concept_tensor.unsqueeze(0)  # Convert from (N,) to (1, N)
-                   
-                       # Now apply padding if the tensor size is less than 512
-                       if concept_tensor.size(1) < 512:
-                           padding = 512 - concept_tensor.size(1)
-                           # Pad the tensor with zeros to match the required size
-                           padding_tensor = torch.zeros(1, padding, device=concept_tensor.device)  # Ensure it's on the same device
-                           padded_concept_tensor = torch.cat([concept_tensor, padding_tensor], dim=1)  # Concatenate along dim=1 (columns)
-                       else:
-                           padded_concept_tensor = concept_tensor
-                   
-                       # Now pass the padded tensor through the computation_on_concepts
-                       concept_output = self.computation_on_concepts(padded_concept_tensor.reshape(1, 512))
-                       concept_outputs.append(concept_output.cpu().numpy())
+                all_concepts.append(concepts)
+                all_processed_explanations.append(processed_explanations)
 
-            
-                return all_concepts, all_processed_explanations, concept_outputs
+                # If there is a computation to run on the concepts, apply it here
+                if self.computation_on_concepts:
+                    with torch.no_grad():
+                        # Ensure the correct shape for the computation on concepts
+                        all_concept_tensors = [torch.from_numpy(np.float32(concept).transpose((1, 0))) for concept in all_concepts]
 
-    
-            else:
-                return all_concepts, all_processed_explanations
+                        # Flatten the concepts to match the expected input shape of the Linear layer (if needed)
+                        flattened_concept_tensors = [concept_tensor.reshape(-1) for concept_tensor in all_concept_tensors]
+
+                        # Iterate over each concept tensor and apply padding if needed
+                        concept_outputs = []
+                        for concept_tensor in flattened_concept_tensors:
+                            # Check if the tensor is 1D, in that case reshape it to 2D (1, N)
+                            if concept_tensor.dim() == 1:
+                                concept_tensor = concept_tensor.unsqueeze(0)  # Convert from (N,) to (1, N)
+
+                            # Now apply padding if the tensor size is less than 512
+                            if concept_tensor.size(1) < 512:
+                                padding = 512 - concept_tensor.size(1)
+                                # Pad the tensor with zeros to match the required size
+                                padding_tensor = torch.zeros(1, padding, device=concept_tensor.device)  # Ensure it's on the same device
+                                padded_concept_tensor = torch.cat([concept_tensor, padding_tensor], dim=1)  # Concatenate along dim=1 (columns)
+                            else:
+                                padded_concept_tensor = concept_tensor
+
+                            # Now pass the padded tensor through the computation on concepts
+                            concept_output = self.computation_on_concepts(padded_concept_tensor.reshape(1, 512))
+                            concept_outputs.append(concept_output.cpu().numpy())
+
+            return all_concepts, all_processed_explanations, concept_outputs
 
     def __del__(self):
         self.activations_and_grads.release()

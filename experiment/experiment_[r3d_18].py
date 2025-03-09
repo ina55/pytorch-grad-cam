@@ -26,7 +26,6 @@ model.eval()
 # Define preprocessing function
 def preprocess_frame(frame):
     transform = transforms.Compose([
-        transforms.Resize((224, 224)),  
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
@@ -76,33 +75,30 @@ def load_video(video_path, frame_sample_rate=5):
 def visualize_and_save(frames, batch_explanations, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     visualization_images = []
-
+    
     min_length = min(len(frames), len(batch_explanations[0]))
+    
     if min_length > 10:
         min_length = 10
     print(f"Processing {min_length} frames...")
-    
-    threshold = 0.75
-    # Convert batch_explanations[0] to a numpy array
-    batch_explanations_np = np.array(batch_explanations[0])
-    
-    # Apply the thresholding operation
-    batch_explanations_np = np.where(batch_explanations_np > threshold, batch_explanations_np, 0)
-    batch_explanations[0] = batch_explanations_np
-    
+        
     for i in range(min_length):  
-        original_height, original_width, _ = frames[i].shape  # Get original frame size
-        explanation_resized = resize_mask_to_original(batch_explanations[0][i], (original_width, original_height))
-
-        # Ensure explanation is in the range [0, 255] and cast to uint8
-        explanation_resized = np.clip(explanation_resized * 255, 0, 255).astype(np.uint8)                
+        threshold = 0.5
+        
+        # Use the explanation for the current frame
+        batch_explanation_np = np.array(batch_explanations[i])
+        
+        # Apply the thresholding operation
+        batch_explanation_np = np.where(batch_explanation_np > threshold, batch_explanation_np, 0)
+        
+        # Create visualization
         visualization = show_factorization_on_image(
-            np.array(frames[i]) / 255.0,  # Convert frame to numpy
-            explanation_resized,  
-            image_weight=0.7
+            np.array(frames[i]) / 255,  # Convert frame to numpy and normalize
+            batch_explanation_np[0],  
+            image_weight=0.5
         )
 
-        # Convert visualization to image format and save
+        # Convert to PIL Image and save
         visualization_img = Image.fromarray((visualization * 255).astype('uint8'))
         if not os.path.exists(f"{output_dir}/auxiliary_frames"):
             os.makedirs(f"{output_dir}/auxiliary_frames", exist_ok=True)
@@ -139,6 +135,73 @@ def cleanup_auxiliary_frames(output_dir):
         print(f"Auxiliary frames cleaned up from '{aux_output_dir}'.")
     else:
         print(f"No auxiliary frames directory found at '{aux_output_dir}'.")
+        
+
+
+def average_frames(rgb_frames, num_frames_target):
+    """
+    Average the frames into a smaller number of frames.
+
+    :param rgb_frames: List of frames (List of numpy arrays or tensors)
+    :param num_frames_target: The number of frames you want to end up with
+    :return: A list of averaged frames
+    """
+    num_frames = len(rgb_frames)
+    # Calculate the step size for grouping frames
+    step = num_frames // num_frames_target
+
+    # Average groups of frames
+    averaged_frames = []
+    for i in range(0, num_frames, step):
+        # Get the next 'step' number of frames
+        group = rgb_frames[i:i + step]
+        
+        # Ensure group size matches the target step
+        if len(group) == step:
+            # Average the frames in the group
+            averaged_frame = np.mean(group, axis=0)  # Average over the group dimension (axis=0)
+            averaged_frames.append(averaged_frame)
+    
+    return averaged_frames
+
+def average_frames_tensor(input_tensor: torch.Tensor, num_frames_target: int):
+    """
+    Average the frames in the input tensor to reduce the number of frames to `num_frames_target`.
+
+    :param input_tensor: The input tensor of shape (batch_size, original_num_frames, channels, height, width)
+    :param num_frames_target: The desired number of frames after averaging
+    :return: The downsampled input tensor with averaged frames
+    """
+    original_num_frames, channels, height, width = input_tensor.shape
+
+    # Calculate the step size for averaging frames
+    step = original_num_frames // num_frames_target
+    remaining_frames = original_num_frames % num_frames_target  # Handling remainder frames
+
+    # Create a list to store the averaged frames
+    averaged_frames = []
+
+    for i in range(0, original_num_frames, step):
+        # Select the group of frames to average
+        end = min(i + step, original_num_frames)
+        frame_group = input_tensor[i:end]  # Get frames in the current group
+
+        # Average the frames across the selected group
+        averaged_frame = frame_group.mean(dim=0)  # Averaging along the frame dimension
+        averaged_frames.append(averaged_frame)
+
+    # Handle the remaining frames if they are left out due to rounding
+    if remaining_frames > 0:
+        # Take the last few frames that were not included
+        remaining_group = input_tensor[-remaining_frames:]
+        averaged_frame = remaining_group.mean(dim=0)
+        averaged_frames.append(averaged_frame)
+
+    # Stack the averaged frames and return the new tensor
+    downsampled_tensor = torch.stack(averaged_frames, dim=1)
+    
+    return downsampled_tensor
+
 
 # Load video frames
 dataset_name = "Kinetics-400"
@@ -148,11 +211,13 @@ for action_name in action_names:
     video_path = f"samples/{dataset_name}/{action_name}.mp4"
     print(f"Loading video from '{video_path}'...")
     input_tensor, rgb_frames = load_video(video_path)
-    print(f"Number of frames: {len(rgb_frames)}")
     
+    num_frames_target = 3
+    rgb_frames = average_frames(rgb_frames, num_frames_target)
+    input_tensor = average_frames_tensor(input_tensor, num_frames_target)    
+        
     # Add batch dimension and frames dimension (each frame treated as a sequence)
     input_tensor = input_tensor.unsqueeze(0)  # Adding batch dimension
-    input_tensor = input_tensor.permute(0, 2, 1, 3, 4)  # Rearranging dimensions
     
     # Define Deep Feature Factorization
     dff = DeepFeatureFactorization(model=model, target_layer=model.layer3, computation_on_concepts=model.fc)
@@ -160,7 +225,7 @@ for action_name in action_names:
     # Initialize list to store results
     visualization_images = []
     
-    n_components = 3
+    n_components = 5
     concepts, batch_explanations, concept_scores = dff(input_tensor, n_components)
     
     # Save visualizations
