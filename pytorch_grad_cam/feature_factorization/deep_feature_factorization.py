@@ -167,49 +167,4 @@ def run_dff_on_image(model: torch.nn.Module,
 
     result = np.hstack((np.array(img_pil), visualization))
     return result
-    
-def run_dff_on_video(model: torch.nn.Module,
-                     target_layer: torch.nn.Module,
-                     classifier: torch.nn.Module,
-                     video_frames: List[Image.Image],
-                     video_tensor: torch.Tensor,
-                     reshape_transform: Optional[Callable] = None,
-                     n_components: int = 5,
-                     top_k: int = 2) -> List[np.ndarray]:
-    """
-    Function to run Deep Feature Factorization on a video. It processes each frame of the video,
-    computes the concepts and explanations, and returns a list of visualizations.
-
-    :param video_frames: List of PIL images representing video frames
-    :param video_tensor: Tensor of shape (batch_size, channels, height, width) for video input
-    :param reshape_transform: Optional reshape transformation for the activations
-    :param n_components: Number of components for NMF
-    :param top_k: Top-k concepts to display
-    :return: List of visualized frames as numpy arrays
-    """
-    dff = DeepFeatureFactorization(model=model,
-                                   reshape_transform=reshape_transform,
-                                   target_layer=target_layer,
-                                   computation_on_concepts=classifier)
-
-    visualizations = []
-    for i, frame in enumerate(video_frames):
-        # Process each frame
-        frame_tensor = video_tensor[i].unsqueeze(0)  # Select single frame from video
-        concepts, batch_explanations, concept_outputs = dff(frame_tensor, n_components)
-
-        concept_outputs = torch.softmax(torch.from_numpy(concept_outputs), axis=-1).numpy()
-        concept_label_strings = create_labels_legend(concept_outputs,
-                                                     labels=model.config.id2label,
-                                                     top_k=top_k)
-        visualization = show_factorization_on_image(
-            np.array(frame) / 255.0,
-            batch_explanations[0],
-            image_weight=0.3,
-            concept_labels=concept_label_strings)
-
-        # Append the result for this frame to the list
-        visualizations.append(np.hstack((np.array(frame), visualization)))
-
-    return visualizations
 

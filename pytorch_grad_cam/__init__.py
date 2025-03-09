@@ -16,7 +16,7 @@ from pytorch_grad_cam.random_cam import RandomCAM
 from pytorch_grad_cam.fullgrad_cam import FullGrad
 from pytorch_grad_cam.guided_backprop import GuidedBackpropReLUModel
 from pytorch_grad_cam.activations_and_gradients import ActivationsAndGradients
-from pytorch_grad_cam.feature_factorization.deep_feature_factorization import DeepFeatureFactorization, run_dff_on_image, run_dff_on_video
+from pytorch_grad_cam.feature_factorization.deep_feature_factorization import DeepFeatureFactorization, run_dff_on_image
 import pytorch_grad_cam.utils.model_targets
 import pytorch_grad_cam.utils.reshape_transforms
 import pytorch_grad_cam.metrics.cam_mult_image

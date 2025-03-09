@@ -18,6 +18,7 @@ model.eval()
 # Define preprocessing function
 def preprocess_frame(frame):
     transform = transforms.Compose([
+        transforms.Resize((224, 224)),  
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
@@ -41,6 +42,11 @@ def load_video(video_path, frame_sample_rate=5):
         frame_id += 1
 
     cap.release()
+
+    # If there are no frames extracted, return an empty tensor
+    if len(frames) == 0:
+        return None
+    
     return torch.stack(frames)
 
 # Define function to process video and evaluate model
@@ -49,9 +55,14 @@ def process_video(model, video_path):
     print(f"Loading video from '{video_path}'...")
     input_tensor = load_video(video_path)
     
+    # Ensure that frames are available
+    if input_tensor is None:
+        print(f"No frames extracted from video: {video_path}")
+        return None
+
     # Add batch dimension and frames dimension (each frame to be treated as a sequence)
     input_tensor = input_tensor.unsqueeze(0)  # Adding batch dimension
-    input_tensor = input_tensor.permute(0, 2, 1, 3, 4)  # Rearranging dimensions
+    input_tensor = input_tensor.permute(0, 2, 1, 3, 4)  # Rearranging dimensions to match (batch, frames, channels, height, width)
     
     # Move input to correct device
     input_tensor = input_tensor.to(device)
@@ -72,7 +83,10 @@ for action_name in action_names:
     video_path = f"samples/{dataset_name}/{action_name}.mp4"
     predicted_class = process_video(model, video_path)
     
-    # load class mappings
+    if predicted_class is None:
+        continue  # Skip if there was an issue with the video
+
+    # Load class mappings
     class_mappings = pd.read_csv('samples/Kinetics-400/mappings/action_classes.csv')
     
     # Convert DataFrame to dictionary

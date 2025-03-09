@@ -7,6 +7,8 @@ import numpy as np
 import torchvision.models as models
 from PIL import Image
 from torchvision import transforms
+from torchvision.transforms import functional as F  # Import pentru F.resize
+import torch.nn.functional as NF
 
 # Add pytorch_grad_cam path to system path
 pytorch_grad_cam_path = os.path.abspath("..")
@@ -24,10 +26,29 @@ model.eval()
 # Define preprocessing function
 def preprocess_frame(frame):
     transform = transforms.Compose([
+        transforms.Resize((224, 224)),  
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     return transform(frame)
+    
+def resize_mask_to_original(mask, original_size):
+    # If the mask has 3 channels, convert it to a single channel (take the average or the first channel)
+    if len(mask.shape) == 3:  # If the mask is 3D (C, H, W)
+        mask = mask.mean(axis=0)  # Average over the channels to get a single channel
+
+    if len(mask.shape) == 2:  # Now mask should be 2D
+        # Convert the mask to a tensor, add batch and channel dimensions
+        mask_resized = NF.interpolate(
+            torch.tensor(mask).unsqueeze(0).unsqueeze(0).float(),  # Convert mask to float tensor
+            size=original_size, 
+            mode='bilinear', 
+            align_corners=False
+        ).squeeze(0).permute(0, 2, 1).numpy()  # Remove batch and channel dimensions
+    else:
+        raise ValueError(f"Unexpected shape of the mask: {mask.shape}. Mask should be 2D.")
+    
+    return mask_resized
 
 # Load video and extract frames
 def load_video(video_path, frame_sample_rate=5):
@@ -57,23 +78,27 @@ def visualize_and_save(frames, batch_explanations, output_dir):
     visualization_images = []
 
     min_length = min(len(frames), len(batch_explanations[0]))
-    if (min_length > 10):
+    if min_length > 10:
         min_length = 10
     print(f"Processing {min_length} frames...")
     
-    threshold = 0.5
+    threshold = 0.75
     # Convert batch_explanations[0] to a numpy array
     batch_explanations_np = np.array(batch_explanations[0])
     
-    # Now apply the thresholding operation
+    # Apply the thresholding operation
     batch_explanations_np = np.where(batch_explanations_np > threshold, batch_explanations_np, 0)
     batch_explanations[0] = batch_explanations_np
     
     for i in range(min_length):  
-        mask = np.zeros_like(frames[1])  # Create a blank mask with the same size as the frame
+        original_height, original_width, _ = frames[i].shape  # Get original frame size
+        explanation_resized = resize_mask_to_original(batch_explanations[0][i], (original_width, original_height))
+
+        # Ensure explanation is in the range [0, 255] and cast to uint8
+        explanation_resized = np.clip(explanation_resized * 255, 0, 255).astype(np.uint8)                
         visualization = show_factorization_on_image(
             np.array(frames[i]) / 255.0,  # Convert frame to numpy
-            batch_explanations[0][i],  
+            explanation_resized,  
             image_weight=0.7
         )
 
@@ -128,7 +153,6 @@ for action_name in action_names:
     # Add batch dimension and frames dimension (each frame treated as a sequence)
     input_tensor = input_tensor.unsqueeze(0)  # Adding batch dimension
     input_tensor = input_tensor.permute(0, 2, 1, 3, 4)  # Rearranging dimensions
-    # print(f"Video loaded with shape: {input_tensor.shape}")
     
     # Define Deep Feature Factorization
     dff = DeepFeatureFactorization(model=model, target_layer=model.layer3, computation_on_concepts=model.fc)
