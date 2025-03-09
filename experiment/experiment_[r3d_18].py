@@ -117,36 +117,38 @@ def cleanup_auxiliary_frames(output_dir):
 
 # Load video frames
 dataset_name = "Kinetics-400"
-action_name = "drums1"
-video_path = f"samples/{dataset_name}/{action_name}.mp4"
-print(f"Loading video from '{video_path}'...")
-input_tensor, rgb_frames = load_video(video_path)
-print(f"Number of frames: {len(rgb_frames)}")
+action_names = sys.argv[1:]
 
-# Add batch dimension and frames dimension (each frame treated as a sequence)
-input_tensor = input_tensor.unsqueeze(0)  # Adding batch dimension
-input_tensor = input_tensor.permute(0, 2, 1, 3, 4)  # Rearranging dimensions
-# print(f"Video loaded with shape: {input_tensor.shape}")
-
-# Define Deep Feature Factorization
-dff = DeepFeatureFactorization(model=model, target_layer=model.layer3, computation_on_concepts=model.fc)
-
-# Initialize list to store results
-visualization_images = []
-
-n_components = 3
-concepts, batch_explanations, concept_scores = dff(input_tensor, n_components)
-
-# Save visualizations
-output_dir = "output_frames"
-visualization_images = visualize_and_save(rgb_frames, batch_explanations, output_dir)
-
-# Concatenate all result photos horizontally
-final_output_filename = f"final_output_{dataset_name}_{action_name}.jpg"
-if not os.path.exists("output_frames/r3d_18"):
-    os.makedirs("output_frames/r3d_18")
-final_output_path = os.path.join("output_frames/r3d_18", final_output_filename)
-concatenate_images(visualization_images, final_output_path)
-
-# Cleanup auxiliary frames after processing
-cleanup_auxiliary_frames("output_frames")
+for action_name in action_names:
+    video_path = f"samples/{dataset_name}/{action_name}.mp4"
+    print(f"Loading video from '{video_path}'...")
+    input_tensor, rgb_frames = load_video(video_path)
+    print(f"Number of frames: {len(rgb_frames)}")
+    
+    # Add batch dimension and frames dimension (each frame treated as a sequence)
+    input_tensor = input_tensor.unsqueeze(0)  # Adding batch dimension
+    input_tensor = input_tensor.permute(0, 2, 1, 3, 4)  # Rearranging dimensions
+    # print(f"Video loaded with shape: {input_tensor.shape}")
+    
+    # Define Deep Feature Factorization
+    dff = DeepFeatureFactorization(model=model, target_layer=model.layer3, computation_on_concepts=model.fc)
+    
+    # Initialize list to store results
+    visualization_images = []
+    
+    n_components = 3
+    concepts, batch_explanations, concept_scores = dff(input_tensor, n_components)
+    
+    # Save visualizations
+    output_dir = "output_frames"
+    visualization_images = visualize_and_save(rgb_frames, batch_explanations, output_dir)
+    
+    # Concatenate all result photos horizontally
+    final_output_filename = f"final_output_{dataset_name}_{action_name}.jpg"
+    if not os.path.exists("output_frames/r3d_18"):
+        os.makedirs("output_frames/r3d_18")
+    final_output_path = os.path.join("output_frames/r3d_18", final_output_filename)
+    concatenate_images(visualization_images, final_output_path)
+    
+    # Cleanup auxiliary frames after processing
+    cleanup_auxiliary_frames("output_frames")

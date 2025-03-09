@@ -66,17 +66,19 @@ def process_video(model, video_path):
     return predicted_class
 
 dataset_name = "Kinetics-400"
-action_name = "football"
-video_path = f"samples/{dataset_name}/{action_name}.mp4"
-predicted_class = process_video(model, video_path)
+action_names = sys.argv[1:]
 
-# load class mappings
-class_mappings = pd.read_csv('samples/Kinetics-400/mappings/action_classes.csv')
-
-# Convert DataFrame to dictionary
-class_dict = class_mappings.set_index('id')['name'].to_dict()
-
-# Get the human-readable name of the predicted class
-predicted_class_name = class_dict[predicted_class.item()]
-
-print(f"Predicted class for video: {predicted_class_name}")
+for action_name in action_names:
+    video_path = f"samples/{dataset_name}/{action_name}.mp4"
+    predicted_class = process_video(model, video_path)
+    
+    # load class mappings
+    class_mappings = pd.read_csv('samples/Kinetics-400/mappings/action_classes.csv')
+    
+    # Convert DataFrame to dictionary
+    class_dict = class_mappings.set_index('id')['name'].to_dict()
+    
+    # Get the human-readable name of the predicted class
+    predicted_class_name = class_dict[predicted_class.item()]
+    
+    print(f"Predicted class for video {video_path}: {predicted_class_name}")
